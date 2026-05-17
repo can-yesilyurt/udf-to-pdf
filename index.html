@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UDF-to-PDF — UYAP Dosya Görüntüleyici</title>
+<meta name="description" content="UYAP .udf dosyalarınızı tarayıcınızda açın, görüntüleyin ve PDF olarak indirin. Dosyalarınız cihazınızdan asla ayrılmaz.">
+<meta name="keywords" content="UDF, UYAP, PDF, belge görüntüleyici, mahkeme belgesi, e-devlet">
+<meta property="og:title" content="UDF-to-PDF — UYAP Dosya Görüntüleyici">
+<meta property="og:description" content="UYAP .udf dosyalarınızı anında görüntüleyin ve PDF'e dönüştürün. %100 yerel, ücretsiz.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #f1f3f6;
+    --panel: #ffffff;
+    --ink: #1a1d23;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --accent-soft: #eff6ff;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -1px rgba(0,0,0,0.04);
+    --shadow-page: 0 1px 3px rgba(0,0,0,0.08), 0 10px 25px rgba(0,0,0,0.10);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== Top bar ===== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .brand-logo {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #2563eb, #3b82f6);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 12px; font-weight: 700;
+  }
+  .file-info {
+    display: flex; align-items: center; gap: 10px;
+    color: var(--muted);
+    font-size: 13px;
+    flex: 1;
+    min-width: 0;
+  }
+  .file-name {
+    font-weight: 500;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 380px;
+  }
+  .signed-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #ecfdf5;
+    color: #047857;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid #a7f3d0;
+  }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 13px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .btn:hover { background: #f9fafb; border-color: #d1d5db; }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary {
+    background: var(--ink);
+    color: white;
+    border-color: var(--ink);
+  }
+  .btn-primary:hover { background: #2d3138; border-color: #2d3138; }
+  .btn svg { width: 14px; height: 14px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ===== Layout ===== */
+  .app { display: flex; height: calc(100vh - 51px); }
+  .canvas {
+    flex: 1;
+    overflow: auto;
+    padding: 32px 24px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .sidebar {
+    width: 300px;
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    overflow: auto;
+    padding: 20px;
+    flex-shrink: 0;
+  }
+  .sidebar h3 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .meta-item {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .meta-item:last-child { border-bottom: none; margin-bottom: 0; }
+  .meta-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .meta-value {
+    font-size: 13px;
+    color: var(--ink);
+    word-break: break-all;
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+    background: #f9fafb;
+    padding: 6px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .copy-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    color: var(--muted);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .copy-btn:hover { color: var(--ink); }
+
+  /* ===== Page (A4) ===== */
+  .page-wrap {
+    width: 210mm;
+    max-width: 100%;
+  }
+  .page {
+    background: white;
+    width: 210mm;
+    min-height: 297mm;
+    box-shadow: var(--shadow-page);
+    position: relative;
+    overflow: hidden;
+    border-radius: 2px;
+  }
+  .page-header {
+    margin-bottom: 12pt;
+  }
+  .page-header.running, .page-footer {
+    color: #6b7280;
+    font-size: 10pt;
+  }
+  .page-header.running {
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 6pt;
+  }
+  .page-footer {
+    border-top: 1px solid #e5e7eb;
+    padding-top: 6pt;
+    margin-top: 12pt;
+  }
+  .page-header, .page-body, .page-footer {
+    color: #000;
+    font-family: "Times New Roman", "Liberation Serif", serif;
+  }
+  .page-header p, .page-header div.tab-row,
+  .page-body p, .page-body div.tab-row,
+  .page-footer p, .page-footer div.tab-row {
+    margin: 0;
+  }
+
+  /* ===== Empty state ===== */
+  .empty {
+    width: 100%;
+    max-width: 580px;
+    margin: auto;
+    padding: 60px 30px;
+    text-align: center;
+  }
+  .dropzone {
+    border: 2px dashed #cbd5e1;
+    border-radius: 14px;
+    padding: 50px 30px;
+    background: var(--panel);
+    transition: all 0.2s ease;
+    cursor: pointer;
+  }
+  .dropzone:hover, .dropzone.drag {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .dropzone-icon {
+    width: 56px; height: 56px;
+    margin: 0 auto 16px;
+    border-radius: 50%;
+    background: #f9fafb;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent);
+    border: 1px solid var(--line);
+  }
+  .dropzone h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .dropzone p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .empty-tagline {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 28px;
+    line-height: 1.5;
+  }
+  .empty h1 {
+    margin: 0 0 8px;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .feature-pills {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+  }
+  .pill {
+    font-size: 11px;
+    padding: 4px 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+  }
+
+  .app-promo {
+    margin-top: 20px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .app-promo a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .app-promo a:hover { text-decoration: underline; }
+  .site-footer {
+    text-align: center;
+    padding: 16px 20px;
+    font-size: 11px;
+    color: var(--muted);
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .site-footer a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .site-footer a:hover { color: var(--ink); }
+
+  /* ===== Loading ===== */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    padding: 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin: 16px;
+  }
+
+  .hidden { display: none !important; }
+
+  /* ===== Print ===== */
+  @media print {
+    .topbar, .sidebar, .site-footer { display: none !important; }
+    .canvas { padding: 0; overflow: visible; height: auto; }
+    .app { height: auto; display: block; }
+    .page { box-shadow: none; border-radius: 0; page-break-after: always; }
+    body { background: white; }
+  }
+
+  /* Scrollbar polish */
+  .canvas::-webkit-scrollbar, .sidebar::-webkit-scrollbar { width: 10px; height: 10px; }
+  .canvas::-webkit-scrollbar-thumb, .sidebar::-webkit-scrollbar-thumb {
+    background: #cbd5e1; border-radius: 6px; border: 2px solid var(--bg);
+  }
+  .canvas::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-logo">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+    </div>
+    <span>UDF-to-PDF</span>
+  </div>
+  <div class="file-info" id="fileInfo"></div>
+  <div class="actions">
+    <button class="btn" id="openBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Open
+    </button>
+    <button class="btn" id="printBtn" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Print
+    </button>
+    <button class="btn btn-primary" id="pdfBtn" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download PDF
+    </button>
+  </div>
+  <input type="file" id="fileInput" accept=".udf,.zip,.xml" style="display:none">
+</header>
+
+<main class="app">
+  <div class="canvas" id="canvas">
+    <!-- Empty state -->
+    <div class="empty" id="emptyState">
+      <h1>UDF-to-PDF</h1>
+      <p class="empty-tagline">UYAP dosyanızı sürükleyip bırakın — anında görüntüleyin ve PDF olarak indirin.<br>Dosyalarınız cihazınızdan asla ayrılmaz.</p>
+      <div class="dropzone" id="dropzone">
+        <div class="dropzone-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <h2>.udf dosyanızı buraya bırakın</h2>
+        <p>veya tıklayarak seçin</p>
+        <div class="feature-pills">
+          <span class="pill">🔒 %100 yerel</span>
+          <span class="pill">📄 PDF dışa aktarma</span>
+          <span class="pill">✅ İmza farkında</span>
+        </div>
+      </div>
+      <div class="app-promo">
+        📱 iPhone'da mı kullanmak istiyorsunuz? <a href="https://apps.apple.com/app/udf-to-pdf" target="_blank" rel="noopener">UDF-to-PDF iOS uygulamasını indirin →</a>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading hidden" id="loadingState">
+      <div class="spinner"></div>
+      <span id="loadingMsg">Reading document…</span>
+    </div>
+
+    <!-- Document -->
+    <div class="page-wrap hidden" id="pageWrap">
+      <article class="page" id="page"></article>
+    </div>
+  </div>
+
+  <aside class="sidebar hidden" id="sidebar">
+    <h3>Document Info</h3>
+    <div id="metaList"></div>
+  </aside>
+</main>
+
+<footer class="site-footer">
+  Powered by <a href="https://nanorescenter.com" target="_blank" rel="noopener">Nanoelectronics Research Center (NRC)</a> · Istanbul
+</footer>
+
+<script>
+// ============================================================
+// UDF-to-PDF — View and convert Turkish UYAP .udf files
+// https://github.com/can-yesilyurt/udf-to-pdf
+// Powered by Nanoelectronics Research Center (NRC)
+// ============================================================
+
+const $ = id => document.getElementById(id);
+const fileInput = $('fileInput');
+const dropzone = $('dropzone');
+const emptyState = $('emptyState');
+const loadingState = $('loadingState');
+const pageWrap = $('pageWrap');
+const pageEl = $('page');
+const sidebar = $('sidebar');
+const metaList = $('metaList');
+const fileInfo = $('fileInfo');
+const pdfBtn = $('pdfBtn');
+const printBtn = $('printBtn');
+const openBtn = $('openBtn');
+
+let currentFileName = '';
+
+// ---- File handling ----
+openBtn.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('click', () => fileInput.click());
+
+['dragenter', 'dragover'].forEach(e => {
+  dropzone.addEventListener(e, ev => {
+    ev.preventDefault();
+    dropzone.classList.add('drag');
+  });
+});
+['dragleave', 'drop'].forEach(e => {
+  dropzone.addEventListener(e, ev => {
+    ev.preventDefault();
+    dropzone.classList.remove('drag');
+  });
+});
+dropzone.addEventListener('drop', ev => {
+  ev.preventDefault();
+  if (ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', ev => {
+  if (ev.target.files.length) handleFile(ev.target.files[0]);
+});
+
+// Allow drop anywhere on the canvas after a file is loaded
+const canvasEl = $('canvas');
+canvasEl.addEventListener('dragover', e => e.preventDefault());
+canvasEl.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+async function handleFile(file) {
+  currentFileName = file.name;
+  showLoading('Reading ' + file.name + '…');
+  try {
+    let contentXml, propsXml = null, hasSign = false;
+    
+    const lower = file.name.toLowerCase();
+    if (lower.endsWith('.xml')) {
+      // Bare content.xml
+      contentXml = await file.text();
+    } else {
+      // Treat as zip (.udf or .zip)
+      const buf = await file.arrayBuffer();
+      const zip = await JSZip.loadAsync(buf);
+      
+      const contentFile = zip.file(/content\.xml$/i)[0];
+      if (!contentFile) throw new Error('content.xml not found inside the file');
+      contentXml = await contentFile.async('string');
+      
+      const propsFile = zip.file(/documentproperties\.xml$/i)[0];
+      if (propsFile) propsXml = await propsFile.async('string');
+      
+      hasSign = zip.file(/sign(-sgn)?(\.sgn)?$/i).length > 0
+             || zip.file(/.*\.sgn$/i).length > 0;
+    }
+    
+    const doc = parseUdf(contentXml, propsXml, hasSign);
+    renderDocument(doc);
+    showDocument(file.name, doc);
+  } catch (err) {
+    console.error(err);
+    showError('Could not open this file. ' + (err.message || err));
+  }
+}
+
+function showLoading(msg) {
+  emptyState.classList.add('hidden');
+  pageWrap.classList.add('hidden');
+  sidebar.classList.add('hidden');
+  loadingState.classList.remove('hidden');
+  $('loadingMsg').textContent = msg;
+}
+
+function showError(msg) {
+  loadingState.classList.add('hidden');
+  emptyState.classList.remove('hidden');
+  let err = document.querySelector('.error');
+  if (!err) {
+    err = document.createElement('div');
+    err.className = 'error';
+    emptyState.insertBefore(err, emptyState.firstChild);
+  }
+  err.textContent = msg;
+  setTimeout(() => err.remove(), 6000);
+}
+
+function showDocument(name, doc) {
+  loadingState.classList.add('hidden');
+  emptyState.classList.add('hidden');
+  pageWrap.classList.remove('hidden');
+  sidebar.classList.remove('hidden');
+  
+  // File info bar
+  fileInfo.innerHTML = '';
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'file-name';
+  nameSpan.textContent = name;
+  fileInfo.appendChild(nameSpan);
+  if (doc.signed) {
+    const badge = document.createElement('span');
+    badge.className = 'signed-badge';
+    badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Signed';
+    fileInfo.appendChild(badge);
+  }
+  
+  // Sidebar metadata
+  metaList.innerHTML = '';
+  const items = [
+    { label: 'File Name', value: name, mono: false },
+    { label: 'Page Format', value: 'A4 (' + Math.round(doc.pageFormat.leftMargin) + 'pt margins)', mono: false }
+  ];
+  if (doc.signed) {
+    items.push({ label: 'Digital Signature', value: 'Present (sign.sgn)', mono: false });
+  }
+  for (const [k, v] of Object.entries(doc.properties)) {
+    items.push({ label: prettyPropKey(k), value: v, mono: true, copyable: true });
+  }
+  for (const it of items) {
+    const div = document.createElement('div');
+    div.className = 'meta-item';
+    const lbl = document.createElement('div');
+    lbl.className = 'meta-label';
+    lbl.textContent = it.label;
+    const val = document.createElement('div');
+    val.className = 'meta-value';
+    if (!it.mono) val.style.fontFamily = 'inherit';
+    const valText = document.createElement('span');
+    valText.textContent = it.value;
+    valText.style.flex = '1';
+    valText.style.minWidth = '0';
+    valText.style.overflow = 'hidden';
+    valText.style.textOverflow = 'ellipsis';
+    val.appendChild(valText);
+    if (it.copyable) {
+      const cp = document.createElement('button');
+      cp.className = 'copy-btn';
+      cp.title = 'Copy';
+      cp.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      cp.onclick = () => {
+        navigator.clipboard.writeText(it.value);
+        cp.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => cp.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>', 1500);
+      };
+      val.appendChild(cp);
+    }
+    div.appendChild(lbl);
+    div.appendChild(val);
+    metaList.appendChild(div);
+  }
+  
+  pdfBtn.disabled = false;
+  printBtn.disabled = false;
+}
+
+function prettyPropKey(k) {
+  const map = {
+    'uyapdogrulamakodu': 'UYAP Verification Code',
+    'uyapsicil': 'UYAP Sicil Number',
+    'tarih': 'Date'
+  };
+  return map[k.toLowerCase()] || k;
+}
+
+// ============================================================
+// Parsing
+// ============================================================
+
+function parseUdf(contentXml, propsXml, hasSign) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(contentXml, 'application/xml');
+  
+  const parseError = doc.querySelector('parsererror');
+  if (parseError) throw new Error('Invalid XML inside UDF');
+  
+  const tpl = doc.querySelector('template');
+  const contentEl = tpl.querySelector(':scope > content');
+  const text = contentEl ? contentEl.textContent : '';
+  
+  const pf = tpl.querySelector('properties > pageFormat');
+  const pageFormat = {
+    leftMargin: parseFloat(pf?.getAttribute('leftMargin')) || 42.5,
+    rightMargin: parseFloat(pf?.getAttribute('rightMargin')) || 42.5,
+    topMargin: parseFloat(pf?.getAttribute('topMargin')) || 42.5,
+    bottomMargin: parseFloat(pf?.getAttribute('bottomMargin')) || 42.5,
+    orientation: pf?.getAttribute('paperOrientation') || '1'
+  };
+  
+  // Build style table
+  const styles = {};
+  tpl.querySelectorAll('styles > style').forEach(s => {
+    const name = s.getAttribute('name');
+    const obj = {};
+    for (const a of s.attributes) obj[a.name] = a.value;
+    styles[name] = obj;
+  });
+  
+  // Walk elements
+  const elementsEl = tpl.querySelector('elements');
+  let header = '', footer = '', body = '';
+  let headerStartPage = 1;
+
+  for (const el of elementsEl.children) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'paragraph') {
+      body += renderParagraph(el, text, styles);
+    } else if (tag === 'table') {
+      body += renderTable(el, text, styles);
+    } else if (tag === 'header') {
+      headerStartPage = parseInt(el.getAttribute('startPage') || '1') || 1;
+      header += renderContainer(el, text, styles);
+    } else if (tag === 'footer') {
+      footer += renderContainer(el, text, styles);
+    }
+  }
+  
+  // Parse properties
+  const properties = {};
+  if (propsXml) {
+    try {
+      const pdoc = parser.parseFromString(propsXml, 'application/xml');
+      pdoc.querySelectorAll('entry').forEach(e => {
+        properties[e.getAttribute('key')] = e.textContent;
+      });
+    } catch (e) { /* ignore */ }
+  }
+  
+  return { header, footer, body, pageFormat, properties, signed: hasSign, headerStartPage };
+}
+
+// ============================================================
+// Rendering helpers
+// ============================================================
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function mergeAttrs(el, styles) {
+  const merged = {};
+  const resolverName = el.getAttribute('resolver');
+  if (resolverName && styles[resolverName]) {
+    Object.assign(merged, styles[resolverName]);
+  }
+  for (const a of el.attributes) merged[a.name] = a.value;
+  return merged;
+}
+
+function inlineCss(el, styles) {
+  const a = mergeAttrs(el, styles);
+  const out = [];
+  if (a.bold === 'true') out.push('font-weight:700');
+  if (a.italic === 'true') out.push('font-style:italic');
+  if (a.underline === 'true') out.push('text-decoration:underline');
+  if (a.strikeThrough === 'true') out.push('text-decoration:line-through');
+  if (a.size) out.push('font-size:' + a.size + 'pt');
+  if (a.family) out.push("font-family:'" + a.family + "', 'Times New Roman', serif");
+  if (a.foreground) {
+    const n = parseInt(a.foreground);
+    if (!isNaN(n)) {
+      const hex = ((n >>> 0) & 0xFFFFFF).toString(16).padStart(6, '0');
+      out.push('color:#' + hex);
+    }
+  }
+  if (a.background) {
+    const n = parseInt(a.background);
+    if (!isNaN(n)) {
+      const hex = ((n >>> 0) & 0xFFFFFF).toString(16).padStart(6, '0');
+      out.push('background-color:#' + hex);
+    }
+  }
+  return out.join(';');
+}
+
+function paragraphCss(p) {
+  const out = [];
+  const align = parseInt(p.getAttribute('Alignment') ?? '0');
+  out.push('text-align:' + (['left', 'center', 'right', 'justify'][align] || 'left'));
+  
+  const li = parseFloat(p.getAttribute('LeftIndent') || '0');
+  const ri = parseFloat(p.getAttribute('RightIndent') || '0');
+  const fli = parseFloat(p.getAttribute('FirstLineIndent') || '0');
+  const hang = parseFloat(p.getAttribute('Hanging') || '0');
+  const sa = parseFloat(p.getAttribute('SpaceAbove') || '0');
+  const sb = parseFloat(p.getAttribute('SpaceBelow') || '0');
+  
+  out.push('margin:' + sa + 'pt ' + ri + 'pt ' + sb + 'pt ' + (li + hang) + 'pt');
+  if (hang > 0) {
+    out.push('text-indent:-' + hang + 'pt');
+  } else if (fli > 0) {
+    out.push('text-indent:' + fli + 'pt');
+  }
+  out.push('line-height:1.4');
+  return out.join(';');
+}
+
+function parseTabStops(tabSet) {
+  if (!tabSet) return [];
+  return tabSet.split(';')
+    .map(t => parseFloat(t.split(':')[0]))
+    .filter(n => !isNaN(n) && n > 0);
+}
+
+// Compute grid-template-columns for a tabbed paragraph.
+// Uses TabSet positions where defined; falls back to a small increment for
+// extra tabs (e.g., a tab before ":" should be small, not 220pt).
+// Scales down proportionally if total exceeds the content area so the last
+// column always has reasonable space for its content.
+function computeGridColumns(stops, numColumns, contentWidth) {
+  const cw = contentWidth || 511; // ~A4 content area in pt
+  const minLast = 140;
+  const widths = [];
+  let lastStop = 0;
+  for (let i = 0; i < numColumns - 1; i++) {
+    let stop = stops[i];
+    if (stop === undefined || stop <= lastStop) {
+      // Missing/invalid stop: assume a separator-style tab (e.g., before ":")
+      stop = lastStop + 24;
+    }
+    widths.push(Math.max(20, stop - lastStop));
+    lastStop = stop;
+  }
+  const total = widths.reduce((a, b) => a + b, 0);
+  if (total + minLast > cw) {
+    const scale = Math.max(0.1, (cw - minLast) / total);
+    for (let i = 0; i < widths.length; i++) widths[i] *= scale;
+  }
+  // Use minmax(width, max-content) so unusually long labels (e.g. section
+  // headings whose label is wider than the tab stop) can grow the column
+  // instead of wrapping character-by-character. Short labels still align
+  // to their tab stops, preserving the intended look between rows.
+  const fixed = widths.map(w => 'minmax(' + w.toFixed(1) + 'pt, max-content)');
+  return [...fixed, 'minmax(' + minLast + 'pt, 1fr)'];
+}
+
+// Render a paragraph; handles tabs as grid columns
+function renderParagraph(p, text, styles) {
+  const pCss = paragraphCss(p);
+  
+  // Build inline pieces; track tabs as column separators
+  const segments = []; // { html, isTab }
+  
+  for (const child of p.children) {
+    const tag = child.tagName.toLowerCase();
+    
+    if (tag === 'image') {
+      const data = (child.getAttribute('imageData') || '').replace(/\s+/g, '');
+      if (data) {
+        segments.push({ html: '<img src="data:image/png;base64,' + data + '" alt="" style="vertical-align:middle;max-height:1.4em">', isTab: false });
+      }
+      continue;
+    }
+    
+    const start = parseInt(child.getAttribute('startOffset') || '0');
+    const len = parseInt(child.getAttribute('length') || '0');
+    if (len === 0) continue;
+    let chunk = text.substring(start, start + len);
+    const css = inlineCss(child, styles);
+    
+    // Strip carriage returns; convert newlines later
+    chunk = chunk.replace(/\r/g, '');
+    
+    // Split on tabs to create column boundaries
+    const parts = chunk.split('\t');
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) segments.push({ html: '', isTab: true });
+      const piece = parts[i];
+      if (piece.length === 0) continue;
+      // Replace remaining newlines with <br> (rare inside a paragraph)
+      let escaped = escapeHtml(piece).replace(/\n/g, '<br>');
+      segments.push({
+        html: css ? '<span style="' + css + '">' + escaped + '</span>' : escaped,
+        isTab: false
+      });
+    }
+  }
+  
+  const tabCount = segments.filter(s => s.isTab).length;
+
+  if (tabCount === 0) {
+    // Some UDF templates fake-center a short title line by padding it with
+    // many leading spaces (e.g. "                     T.C." in the İdare
+    // Mahkemesi template). Other templates use a leading tab for the same
+    // purpose; those go through the grid branch below and get stripped there.
+    // Strip the leading whitespace here so both styles end up flush with the
+    // rest of the body instead of carrying an uneven indent.
+    for (const s of segments) {
+      if (!s.html) continue;
+      s.html = s.html.replace(/^(<[^>]*>)?[ \t ]+/, '$1');
+      break;
+    }
+    const inner = segments.map(s => s.html).join('') || '&nbsp;';
+    return '<p style="' + pCss + ';white-space:pre-wrap">' + inner + '</p>';
+  }
+  
+  // Group into columns
+  const rawColumns = [[]];
+  for (const s of segments) {
+    if (s.isTab) rawColumns.push([]);
+    else rawColumns[rawColumns.length - 1].push(s.html);
+  }
+
+  // Collapse runs of consecutive empty columns. UDF docs commonly pad a title
+  // line with dozens of trailing tabs to push the final word to the right edge
+  // (e.g. "AĞIR CEZA MAHKEMESİ\t\t\t…\t-BERAAT-"). Without collapsing, the
+  // grid explodes into 50+ tracks; under page-width pressure they scale down
+  // to a few pt each, forcing words in the first column to wrap one character
+  // per line.
+  // Track how many empties were absorbed just before each kept column so the
+  // last cell can be right-aligned when the source clearly meant to push it
+  // to the right margin.
+  const columns = [];
+  const collapsedBefore = [];
+  let absorbed = 0;
+  for (const c of rawColumns) {
+    const prev = columns[columns.length - 1];
+    if (c.length === 0 && prev && prev.length === 0) {
+      absorbed++;
+      continue;
+    }
+    collapsedBefore.push(absorbed);
+    absorbed = 0;
+    columns.push(c);
+  }
+
+  const align = parseInt(p.getAttribute('Alignment') ?? '0');
+  const li = parseFloat(p.getAttribute('LeftIndent') || '0');
+  const ri = parseFloat(p.getAttribute('RightIndent') || '0');
+  const sa = parseFloat(p.getAttribute('SpaceAbove') || '0');
+  const sb = parseFloat(p.getAttribute('SpaceBelow') || '0');
+
+  // Drop a leading empty column. UDF sources use a "\tCONTENT" pattern for
+  // title-block lines (T.C., city, court name) to indent them to a tab stop
+  // around 70-83pt. The result reads as an "unnecessary indent" in the body,
+  // misaligned from neighbouring left-margin lines like "(TÜKETİCİ MAHKEMESİ
+  // SIFATIYLA)". Removing the leading empty column aligns the title block
+  // with the rest of the body.
+  let strippedLeadingTab = false;
+  if (columns.length > 1 && columns[0].length === 0 && collapsedBefore[0] === 0) {
+    columns.shift();
+    collapsedBefore.shift();
+    strippedLeadingTab = true;
+  }
+
+  // If only one column remains, no grid is needed — render as a plain paragraph.
+  if (columns.length === 1) {
+    const inner = columns[0].join('') || '&nbsp;';
+    return '<p style="' + pCss + ';white-space:pre-wrap">' + inner + '</p>';
+  }
+
+  const stops = parseTabStops(p.getAttribute('TabSet'));
+  // If we stripped a leading-tab indent, the first source tab stop was used
+  // to position that indent; drop it so the remaining columns align to the
+  // remaining stops.
+  const effectiveStops = strippedLeadingTab ? stops.slice(1) : stops;
+  const colWidths = computeGridColumns(effectiveStops, columns.length);
+
+  // Use grid for clean tab alignment
+  const gridCss = [
+    'display:grid',
+    'grid-template-columns:' + colWidths.join(' '),
+    'margin:' + sa + 'pt ' + ri + 'pt ' + sb + 'pt ' + li + 'pt',
+    'line-height:1.4',
+    'word-wrap:break-word'
+  ].join(';');
+  
+  const cells = columns.map((col, idx) => {
+    const inner = col.join('') || '&nbsp;';
+    const isLast = idx === columns.length - 1;
+    // If the source padded with many tabs before this cell, the author meant
+    // to push the content to the right margin (e.g. "-BERAAT-" tag at the
+    // end of a court title line). Right-align such cells.
+    const pushedRight = collapsedBefore[idx] >= 3;
+    // Only break-word on the last (content) column; label columns shouldn't
+    // shatter into characters even if briefly tight.
+    let cellStyle = 'min-width:0';
+    if (isLast) cellStyle += ';overflow-wrap:break-word';
+    if (pushedRight) cellStyle += ';text-align:right';
+    return '<div style="' + cellStyle + '">' + inner + '</div>';
+  }).join('');
+  
+  return '<div class="tab-row" style="' + gridCss + '">' + cells + '</div>';
+}
+
+function renderContainer(el, text, styles) {
+  let out = '';
+  for (const child of el.children) {
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'paragraph') out += renderParagraph(child, text, styles);
+    else if (tag === 'table') out += renderTable(child, text, styles);
+  }
+  return out;
+}
+
+function renderTable(t, text, styles) {
+  const border = t.getAttribute('border') || '';
+  const borderless = border === 'borderNone';
+  const tableWidthAttr = t.getAttribute('width');
+  // Always use auto layout — never force fixed widths that could clip content.
+  // The table fills the available space (min-width:100%) but can grow if a
+  // cell needs more room for an unbreakable line like a court name.
+  let tableStyle = 'border-collapse:collapse;margin:4pt 0;table-layout:auto';
+  if (tableWidthAttr) {
+    tableStyle += ';width:' + parseFloat(tableWidthAttr) + 'pt';
+  } else {
+    tableStyle += ';width:100%';
+  }
+
+  let html = '<table style="' + tableStyle + '">';
+  for (const row of t.children) {
+    if (row.tagName.toLowerCase() !== 'row') continue;
+    html += '<tr>';
+    for (const cell of row.children) {
+      if (cell.tagName.toLowerCase() !== 'cell') continue;
+      const cellWidth = cell.getAttribute('width');
+      const colspan = cell.getAttribute('colspan') || cell.getAttribute('colSpan');
+      const rowspan = cell.getAttribute('rowspan') || cell.getAttribute('rowSpan');
+      // Use min-width (not width) so the cell respects the source's intended
+      // size as a floor but can still grow to fit longer lines instead of
+      // shattering them character-by-character.
+      let cellStyle = 'padding:4pt;vertical-align:top';
+      if (cellWidth) cellStyle += ';min-width:' + parseFloat(cellWidth) + 'pt';
+      if (!borderless) cellStyle += ';border:1px solid #000';
+      let attrs = '';
+      if (colspan) attrs += ' colspan="' + parseInt(colspan) + '"';
+      if (rowspan) attrs += ' rowspan="' + parseInt(rowspan) + '"';
+      html += '<td' + attrs + ' style="' + cellStyle + '">';
+      for (const child of cell.children) {
+        const tag = child.tagName.toLowerCase();
+        if (tag === 'paragraph') html += renderParagraph(child, text, styles);
+        else if (tag === 'table') html += renderTable(child, text, styles);
+      }
+      html += '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+// ============================================================
+// Document layout
+// ============================================================
+
+function renderDocument(doc) {
+  const pf = doc.pageFormat;
+  // Convert pt to mm: 1pt = 0.3528mm
+  const ptToMm = pt => (pt * 0.352778).toFixed(2);
+  
+  const padTop = ptToMm(pf.topMargin);
+  const padRight = ptToMm(pf.rightMargin);
+  const padBottom = ptToMm(pf.bottomMargin);
+  const padLeft = ptToMm(pf.leftMargin);
+  
+  const isLandscape = pf.orientation === '0';
+  pageEl.style.width = isLandscape ? '297mm' : '210mm';
+  pageEl.style.minHeight = isLandscape ? '210mm' : '297mm';
+  pageEl.style.padding = padTop + 'mm ' + padRight + 'mm ' + padBottom + 'mm ' + padLeft + 'mm';
+  
+  // Always render header and footer inline so the HTML preview and the
+  // exported PDF match. Headers with startPage>1 are running headers for
+  // printed pages 2+; we still surface them in the preview but with a
+  // smaller/gray style to mark them as page-header content rather than body.
+  // Headers with startPage<=1 carry the document's title block, so they
+  // render at full body styling.
+  let html = '';
+  if (doc.header) {
+    const cls = doc.headerStartPage > 1 ? 'page-header running' : 'page-header';
+    html += '<div class="' + cls + '">' + doc.header + '</div>';
+  }
+  html += '<div class="page-body">' + (doc.body || '<p>(empty document)</p>') + '</div>';
+  if (doc.footer) {
+    html += '<div class="page-footer">' + doc.footer + '</div>';
+  }
+
+  pageEl.innerHTML = html;
+}
+
+// ============================================================
+// Export
+// ============================================================
+
+pdfBtn.addEventListener('click', async () => {
+  if (!pageEl.innerHTML.trim()) return;
+  pdfBtn.disabled = true;
+  const orig = pdfBtn.innerHTML;
+  pdfBtn.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite"></span> Exporting…';
+  
+  try {
+    const filename = (currentFileName || 'document').replace(/\.(udf|zip|xml)$/i, '') + '.pdf';
+    const isLandscape = pageEl.style.width === '297mm';
+    
+    const opt = {
+      margin: 0,
+      filename,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: isLandscape ? 'landscape' : 'portrait', compress: true },
+      pagebreak: { mode: ['css', 'legacy'] }
+    };
+    
+    // Clone the page so we don't disturb the live one (and remove shadow).
+    // The clone has to be in the document so html2canvas can resolve computed
+    // styles for the header/footer/body classes — a detached clone renders
+    // without those styles and the running header / footer disappear from
+    // the PDF.
+    const clone = pageEl.cloneNode(true);
+    clone.style.boxShadow = 'none';
+    clone.style.borderRadius = '0';
+    const wrap = document.createElement('div');
+    wrap.style.position = 'fixed';
+    wrap.style.left = '-10000px';
+    wrap.style.top = '0';
+    wrap.appendChild(clone);
+    document.body.appendChild(wrap);
+
+    try {
+      await html2pdf().set(opt).from(clone).save();
+    } finally {
+      wrap.remove();
+    }
+  } catch (e) {
+    console.error(e);
+    alert('PDF export failed: ' + e.message);
+  } finally {
+    pdfBtn.innerHTML = orig;
+    pdfBtn.disabled = false;
+  }
+});
+
+printBtn.addEventListener('click', () => window.print());
+
+</script>
+
+</body>
+</html>
